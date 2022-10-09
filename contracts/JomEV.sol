@@ -4,6 +4,8 @@ import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
 import {SafeMath} from "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./IVault.sol";
+
 struct Station {
     uint256 pricePerHour;
     string location;
@@ -16,9 +18,10 @@ contract JomEV is Ownable {
     using Counters for Counters.Counter;
     using SafeMath for uint256;
 
+    IVault public vault;
+
     event UserJoined(address userAddr);
     event ProviderJoined(address providerAddr);
-    //
     event BookingSubmited(
         uint256 chargingPointIndex,
         uint256 connectorIndex,
@@ -54,6 +57,8 @@ contract JomEV is Ownable {
         public ChargingPointToStation;
     mapping(uint256 => uint256) public StationCounterInChargingPoint;
 
+    mapping(string => uint256) public StationIDtoStationIndex;
+
     uint256 private TIMESTAMP_PER_DAY = 86400;
     uint256 internal contract_time_lower_bound;
     Counters.Counter public stationIDs;
@@ -76,6 +81,10 @@ contract JomEV is Ownable {
         _;
     }
 
+    function setVault(address _vault) external onlyOwner {
+        vault = IVault(_vault);
+    }
+
     //dummy function for now, we will use worldcoin to upgrade this
     function joinAsUser() external {
         //worldcoin verification
@@ -89,6 +98,7 @@ contract JomEV is Ownable {
     }
 
     function addChargingPoint(
+        string calldata chargingPointID,
         uint256 _pricePerHour,
         string calldata cid,
         address tokenAddr,
@@ -100,13 +110,16 @@ contract JomEV is Ownable {
         );
         IERC20(tokenAddr).transferFrom(
             msg.sender,
-            address(this),
+            address(vault),
             amountToTransfer
         );
+        vault.mintEVToken(msg.sender, amountToTransfer, tokenAddr);
+        //IERC20(tokenAddr).transferFrom(msg.sender, address(this),amountToTransfer);
         stakes[tokenAddr][msg.sender] += amountToTransfer;
 
         ChargingPointIDs.increment();
         uint256 currChargingPointCount = ChargingPointIDs.current();
+        StationIDtoStationIndex[chargingPointID] = currChargingPointCount;
         for (uint256 i = 0; i < nConnectors; i++) {
             _addStation(_pricePerHour, cid, currChargingPointCount);
         }
@@ -195,9 +208,11 @@ contract JomEV is Ownable {
         //perform payment
         uint256 amountRequired = selectedStation.pricePerHour;
         require(isAcceptedPayment[tokenAddr], "this token is not accepted");
+        //IERC20(tokenAddr).transferFrom(msg.sender, address(this) , amountRequired);
+
         IERC20(tokenAddr).transferFrom(
             msg.sender,
-            address(this),
+            address(vault),
             amountRequired
         );
 
@@ -253,13 +268,27 @@ contract JomEV is Ownable {
         isAcceptedPayment[tokenAddr] = true;
     }
 
-    //readers
+    ///readers
     function getStation(uint256 index)
         external
         view
         returns (Station memory station)
     {
         return (stationsMap[index]);
+    }
+
+    function getConnector(string memory chargingPointID, uint256 connectorID)
+        external
+        view
+        returns (Station memory station)
+    {
+        return (
+            stationsMap[
+                ChargingPointToStation[
+                    StationIDtoStationIndex[chargingPointID]
+                ][connectorID]
+            ]
+        );
     }
 
     /**
